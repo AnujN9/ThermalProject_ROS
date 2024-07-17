@@ -1,0 +1,6 @@
+testing/*
+.vscode/**
+.venv/**
+.pyc/**
+**/__pycache__/
+**/build/
