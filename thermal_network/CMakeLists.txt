@@ -33,7 +33,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ThermalData.msg"
   LIBRARY_NAME ${PROJECT_NAME}
   DEPENDENCIES
-  )
+)
 
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 
@@ -48,6 +48,7 @@ install(TARGETS
 
 install(DIRECTORY
   launch
+  config
   src
   DESTINATION share/${PROJECT_NAME}/
 )
