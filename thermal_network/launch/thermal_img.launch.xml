@@ -1,0 +1,6 @@
+<launch>
+    <!-- Node for receiving raw thermal data and converting it to ros messages-->
+    <node pkg="thermal_network" exec="thermal_data" name="thermal_data"/>
+    <!-- Visualization of thermal image in rviz -->
+    <node name="rviz2" pkg="rviz2" exec="rviz2" args="-d $(find-pkg-share thermal_network)/config/thermal_img.rviz"/>
+</launch>

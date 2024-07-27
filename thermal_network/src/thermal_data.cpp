@@ -1,52 +1,82 @@
-/// \file
-/// \brief
+/// \file ROS Node for converting data from Lepton 3.1R to ROS messages
+/// \brief Converts raw data received from ethernet to ros messages
 ///
 /// PARAMETERS:
-///     \param
+///     \param None
 ///
 /// PUBLISHES:
-///     \param
+///     \param thermal_image (sensor_msgs::msg::Image) Thermal image with custom colormap
+///     \param raw_thermal_temperature (thermal_network::msg::ThermalData) Raw temperature data
 ///
 /// SUBSCRIBES:
-///     \param
+///     \param None
 ///
 /// SERVERS:
-///     None
+///     \param None
 ///
 /// CLIENTS:
-///     None
+///     \param None
 
 #include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <thread>
 
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
-#include "boost/asio.hpp"
+#include "sensor_msgs/image_encodings.hpp"
 #include "thermal_network/msg/thermal_data.hpp"
 
 using namespace std::chrono_literals;
-using boost::asio::ip::udp;
 
 class ThermalData : public rclcpp::Node
 {
-  /// \brief
-  ///
-  /// \param
+/// \brief Node that receives data from UDP network and converts it to ROS messages
 
 public:
+  /// \brief Main constructor
   ThermalData()
-  : Node("ThermalData"), socket_(io_service_, udp::endpoint(udp::v4(), 8080))
+  : Node("ThermalData")
   {
+    // Socket settings intialization
+    if ((sockfd_ = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+      RCLCPP_ERROR_STREAM(get_logger(), "Socket creation failed");
+      rclcpp::shutdown();
+    }
+
+    memset(&servaddr_, 0, sizeof(servaddr_));
+    memset(&cliaddr_, 0, sizeof(cliaddr_));
+
+    servaddr_.sin_family = AF_INET;
+    servaddr_.sin_port = htons(8080);
+    servaddr_.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(sockfd_, (const struct sockaddr *)&servaddr_, sizeof(servaddr_)) < 0) {
+      RCLCPP_ERROR_STREAM(get_logger(), "Bind failed");
+      close(sockfd_);
+      rclcpp::shutdown();
+    }
+
     // Publishers
     thermal_pub_ = create_publisher<thermal_network::msg::ThermalData>(
       "raw_thermal_tempature", 10);
     img_pub_ = create_publisher<sensor_msgs::msg::Image>("thermal_image", 10);
 
-    // Running asynchronous receive for thermal data
-    temp_data();
+    // Running thread to receive thermal data
+    received_thread_ = std::thread(&ThermalData::temp_data, this);
+  }
+
+  /// \brief Main destructor that closes the function and merges with the thread
+  ~ThermalData()
+  {
+    close(sockfd_);
+    if (received_thread_.joinable()) {
+      received_thread_.join();
+    }
   }
 
 private:
@@ -54,8 +84,12 @@ private:
   sensor_msgs::msg::Image thermal_image_msg_;
   thermal_network::msg::ThermalData temp_msg_;
 
-  bool autoRangeMin_ = true;
-  bool autoRangeMax_ = true;
+  int sockfd_;
+  struct sockaddr_in servaddr_, cliaddr_;
+  std::thread received_thread_;
+
+  bool autoRangeMin_ = false;
+  bool autoRangeMax_ = false;
   uint16_t rangeMin_ = 27300; // Minimum temperture range (temp / 100 - 273) celsius
   uint16_t rangeMax_ = 31500; // Maximum temperture range
   int myImageWidth_ = 160;
@@ -71,9 +105,6 @@ private:
   std::vector<uint8_t> image_data_ = std::vector<uint8_t>(myImageWidth_ * myImageHeight_ * 3);
 
   // Create objects
-  boost::asio::io_service io_service_;
-  udp::socket socket_;
-  udp::endpoint sender_endpoint_;
   rclcpp::Publisher<thermal_network::msg::ThermalData>::SharedPtr thermal_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr img_pub_;
 
@@ -121,21 +152,21 @@ private:
   /// \brief Main function that receives data from udp
   void temp_data()
   {
-    socket_.async_receive_from(
-      boost::asio::buffer(result_), sender_endpoint_,
-      [this](std::error_code ec, std::size_t bytes_recvd)
-      {
-        if (!ec && bytes_recvd > 0) {
-          static int buffer_count = 0;
-          buffer_count++;
-          std::memcpy(shelf_[buffer_count % 4].data(), result_.data(), bytes_recvd);
-          if (buffer_count % 4 == 0) {
-            process_data();
-          }
+    socklen_t len = sizeof(cliaddr_);
+    while (rclcpp::ok()) {
+      for (int i = 0; i < 4; ++i) {
+        ssize_t received_bytes =
+          recvfrom(
+          sockfd_,
+          shelf_[i].data(), sizeof(shelf_[i]), 0, (struct sockaddr *)&cliaddr_, &len);
+        if (received_bytes < 0) {
+          RCLCPP_ERROR_STREAM(get_logger(), "Receive failed");
+          close(sockfd_);
+          return;
         }
-        temp_data();
       }
-    );
+      process_data();
+    }
   }
 
   /// \brief Processes data received and publishes the temperature data and image
@@ -216,7 +247,7 @@ private:
     thermal_image_msg_.header.frame_id = "thermal_image";
     thermal_image_msg_.height = myImageHeight_;
     thermal_image_msg_.width = myImageWidth_;
-    thermal_image_msg_.encoding = "rgb8";
+    thermal_image_msg_.encoding = sensor_msgs::image_encodings::RGB8;
     thermal_image_msg_.is_bigendian = false;
     thermal_image_msg_.step = myImageWidth_ * 3;
     thermal_image_msg_.data = image_data_;
