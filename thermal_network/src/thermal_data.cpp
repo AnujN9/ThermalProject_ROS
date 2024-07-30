@@ -217,7 +217,13 @@ private:
           n_zero_value_drop_frame_++;
           break;
         }
-        value = (valueFrameBuffer - minValue_) * scale_;
+        if (!autoRangeMax_ && (valueFrameBuffer > maxValue_)) {
+          value = maxValue_;
+        } else if (!autoRangeMin_ && (valueFrameBuffer <= minValue_)) {
+          value = minValue_;
+        } else {
+          value = (valueFrameBuffer - minValue_) * scale_;
+        }
         float temperature = (valueFrameBuffer / 100.0) - 273.0;
         int ofs_r = 3 * value + 0; if (selectedColormapSize_ <= ofs_r) {
           ofs_r = selectedColormapSize_ - 1;
@@ -242,6 +248,8 @@ private:
       n_zero_value_drop_frame_ = 0;
     }
     temp_msg_.temp = temperature_data_;
+    temp_msg_.height = myImageHeight_;
+    temp_msg_.width = myImageWidth_;
     thermal_pub_->publish(temp_msg_);
     thermal_image_msg_.header.stamp = get_clock()->now();
     thermal_image_msg_.header.frame_id = "thermal_image";
